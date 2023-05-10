@@ -55,8 +55,11 @@ const defaultRedisConfig = "127.0.0.1:6379"
 // defaultLockPrefix is the default prefix for Redis locks.
 const defaultLockPrefix = "myurls:lock:"
 
-// defaultRenewal is the default renewal time for Redis locks.
-const defaultRenewal = 1
+// defaultMd5Prefix is the default prefix for Redis md5.
+const defaultMd5Prefix = "myurls:md5:"
+
+// defaultRenewalDay is the default renewal day for Redis locks.
+const defaultRenewalDay = 1
 
 // secondsPerDay is the number of seconds in a day.
 const secondsPerDay = 24 * 3600
@@ -199,7 +202,8 @@ func longToShort(longUrl string, ttl int) string {
 	// 是否生成过该长链接对应短链接
 	longUrlMD5Bytes := md5.Sum([]byte(longUrl))
 	longUrlMD5 := hex.EncodeToString(longUrlMD5Bytes[:])
-	_existsKey, _ := redis.String(redisClient.Do("get", longUrlMD5))
+	// 添加前缀，防止和短链接冲突
+	_existsKey, _ := redis.String(redisClient.Do("get", defaultMd5Prefix+longUrlMD5))
 	if _existsKey != "" {
 		_, _ = redisClient.Do("expire", _existsKey, ttl)
 
@@ -219,7 +223,8 @@ func longToShort(longUrl string, ttl int) string {
 	}
 
 	if shortKey != "" {
-		_, _ = redisClient.Do("mset", shortKey, longUrl, longUrlMD5, shortKey)
+		// 添加前缀，防止和短链接冲突
+		_, _ = redisClient.Do("mset", shortKey, longUrl, defaultMd5Prefix+longUrlMD5, shortKey)
 
 		_, _ = redisClient.Do("expire", shortKey, ttl)
 		_, _ = redisClient.Do("expire", longUrlMD5, secondsPerDay)
@@ -233,17 +238,17 @@ func renew(shortKey string) {
 	redisClient = redisPool.Get()
 	defer redisClient.Close()
 
-	// 加锁
+	// 加锁， 防止多次续命
 	lockKey := defaultLockPrefix + shortKey
 	lock, _ := redis.Int(redisClient.Do("setnx", lockKey, 1))
 	if lock == 1 {
 		// 设置锁过期时间
-		_, _ = redisClient.Do("expire", lockKey, defaultRenewal*secondsPerDay)
+		_, _ = redisClient.Do("expire", lockKey, defaultRenewalDay*secondsPerDay)
 
 		// 续命
 		ttl, err := redis.Int(redisClient.Do("ttl", shortKey))
 		if err == nil && ttl != -1 {
-			_, _ = redisClient.Do("expire", shortKey, ttl+defaultRenewal*secondsPerDay)
+			_, _ = redisClient.Do("expire", shortKey, ttl+defaultRenewalDay*secondsPerDay)
 		}
 	}
 }
